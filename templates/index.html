@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Real-time Audio and Video Analysis</title>
+    <style>
+        #localVideo {
+            width: 100%;
+            max-width: 600px;
+            border: 2px solid #ccc;
+            margin-bottom: 10px;
+        }
+        #startButton, #stopButton {
+            margin: 5px;
+        }
+        #transcription {
+            margin-top: 10px;
+            font-size: 1.2em;
+            font-family: Arial, sans-serif;
+        }
+        #transcription-table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
+        }
+        #transcription-table th, #transcription-table td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <h1>Real-time Audio and Video Analysis</h1>
+    
+    <!-- Video Streaming -->
+    <div>
+        <video id="localVideo" autoplay muted playsinline></video>
+        <br>
+        <button id="startButton">Start Streaming</button>
+        <button id="stopButton" disabled>Stop Streaming</button>
+    </div>
+
+    <!-- Live Transcription and Emotions -->
+    <div>
+        <h2>Live Transcription and Emotions</h2>
+        <table border="1" id="transcription-table">
+            <thead>
+                <tr>
+                    <th>Speaker</th>
+                    <th>Emotion</th>
+                    <th>Transcription</th>
+                </tr>
+            </thead>
+            <tbody>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // JavaScript from client.js for WebRTC functionality
+        let localStream;
+        let websocket;
+        const videoElement = document.getElementById('localVideo');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        
+        startButton.addEventListener('click', startStreaming);
+        stopButton.addEventListener('click', stopStreaming);
+        
+        let transcriptionElement;
+        let transcriptionHistory = '';
+
+        async function startStreaming() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                videoElement.srcObject = localStream;
+
+                console.log('Media devices accessed successfully.');
+
+                websocket = new WebSocket('wss://airecorder.talic.hku.hk');
+
+                websocket.onopen = () => {
+                    console.log('WebSocket connection established');
+                    startButton.disabled = true;
+                    stopButton.disabled = false;
+
+                    sendAudioData();
+                    sendVideoData();
+                };
+
+                websocket.onmessage = (event) => {
+                    console.log('WebSocket message received:', event.data);
+                    const message = JSON.parse(event.data);
+                    if (message.type === 'transcription') {
+                        updateTranscription(message.data);
+                    }
+                };
+
+                websocket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                };
+
+                websocket.onclose = (event) => {
+                    console.log('WebSocket connection closed:', event);
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                };
+
+            } catch (error) {
+                console.error('Error accessing media devices:', error);
+            }
+        }
+
+        function stopStreaming() {
+            console.log('Stopping streaming...');
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            if (websocket) {
+                websocket.close();
+            }
+            videoElement.srcObject = null;
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            transcriptionHistory = '';
+        }
+
+        function updateTranscription(text) {
+            // For WebSocket data display (to be integrated into a transcription area, e.g., table)
+            if (transcriptionElement) {
+                transcriptionHistory += text + ' ';
+                transcriptionElement.textContent = transcriptionHistory;
+                transcriptionElement.scrollTop = transcriptionElement.scrollHeight;
+            }
+        }
+
+        function sendAudioData() {
+            const audioTrack = localStream.getAudioTracks()[0];
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const sourceNode = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+            const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+            sourceNode.connect(scriptNode);
+            scriptNode.connect(audioContext.destination);
+
+            scriptNode.onaudioprocess = (event) => {
+                const audioData = event.inputBuffer.getChannelData(0); 
+                const float32Array = new Float32Array(audioData);
+                const arrayBuffer = float32Array.buffer;
+                const base64String = arrayBufferToBase64(arrayBuffer);
+
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify({ type: 'audio', data: base64String }));
+                } else {
+                    console.error('WebSocket is not open. Cannot send audio data.');
+                }
+            };
+        }
+
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return window.btoa(binary);
+        }
+
+        function sendVideoData() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            videoElement.onloadedmetadata = () => {
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+            };
+
+            function captureFrame() {
+                if (localStream && localStream.getVideoTracks()[0].readyState === 'live') {
+                    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                    const imageData = canvas.toDataURL('image/jpeg', 0.5);
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(JSON.stringify({ type: 'video', data: imageData }));
+                    } else {
+                        console.error('WebSocket is not open. Cannot send video data.');
+                    }
+                }
+                setTimeout(captureFrame, 100); 
+            }
+
+            captureFrame();
+        }
+
+        // Integration of live transcription
+        const eventSource = new EventSource("/transcriptions");
+        eventSource.onmessage = function(event) {
+            console.log("Received event:", event);
+            const data = JSON.parse(event.data);
+            console.log("Received transcription data:", data);
+            const tableBody = document.querySelector("#transcription-table tbody");
+            tableBody.innerHTML = "";
+            for (const [speaker, info] of Object.entries(data)) {
+                const row = document.createElement("tr");
+                const speakerCell = document.createElement("td");
+                const emotionCell = document.createElement("td");
+                const transcriptionCell = document.createElement("td");
+                speakerCell.textContent = speaker;
+                emotionCell.textContent = info.emotion;
+                transcriptionCell.textContent = info.transcription;
+                row.appendChild(speakerCell);
+                row.appendChild(emotionCell);
+                row.appendChild(transcriptionCell);
+                tableBody.appendChild(row);
+            }
+        };
+        eventSource.onerror = function(event) {
+            console.error("EventSource failed:", event);
+        };
+    </script>
+</body>
+</html>
