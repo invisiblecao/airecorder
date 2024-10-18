@@ -19,40 +19,63 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, WhisperTokeni
 from scipy.signal import resample
 import warnings
 import traceback
-
+import flash_attn
 # Suppress warnings (optional)
 warnings.filterwarnings("ignore")
 
-# Device selection
+# # Device selection
+# device = "cuda" if torch.cuda.is_available() else "cpu"
+# torch_dtype = torch.float16
+# print(f"Using device: {device}")
+
+# # Load Whisper model
+# model_id = "openai/whisper-large-v3-turbo"
+
+# model = AutoModelForSpeechSeq2Seq.from_pretrained(
+#     model_id,
+#     torch_dtype=torch_dtype,
+#     low_cpu_mem_usage=True,
+#     use_safetensors=True,
+# ).to(device)
+
+# processor = AutoProcessor.from_pretrained(model_id)
+
+# # Initialize tokenizer with language="en"
+# tokenizer = WhisperTokenizer.from_pretrained(model_id, language="en")
+
+# # Initialize pipeline with max_new_tokens=25
+# pipe = pipeline(
+#     "automatic-speech-recognition",
+#     model=model,
+#     tokenizer=tokenizer,
+#     feature_extractor=processor.feature_extractor,
+#     torch_dtype=torch_dtype,
+#     device=device,
+#     max_new_tokens=25,
+# )
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch_dtype = torch.float16
-print(f"Using device: {device}")
-
-# Load Whisper model
-model_id = "openai/whisper-large-v3-turbo"
-
+MODEL_NAME = "openai/whisper-large-v3-turbo"
+# Load model and move to GPU
 model = AutoModelForSpeechSeq2Seq.from_pretrained(
-    model_id,
-    torch_dtype=torch_dtype,
-    low_cpu_mem_usage=True,
-    use_safetensors=True,
-).to(device)
+    MODEL_NAME, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True, attn_implementation="flash_attention_2"
+)
+model.to(device)  # Ensure the model is moved to GPU immediately after loading
 
-processor = AutoProcessor.from_pretrained(model_id)
+processor = AutoProcessor.from_pretrained(MODEL_NAME)
+tokenizer = WhisperTokenizer.from_pretrained(MODEL_NAME)
 
-# Initialize tokenizer with language="en"
-tokenizer = WhisperTokenizer.from_pretrained(model_id, language="en")
-
-# Initialize pipeline with max_new_tokens=25
 pipe = pipeline(
-    "automatic-speech-recognition",
+    task="automatic-speech-recognition",
     model=model,
     tokenizer=tokenizer,
     feature_extractor=processor.feature_extractor,
+    chunk_length_s=10,
     torch_dtype=torch_dtype,
     device=device,
-    max_new_tokens=25,
 )
+
 
 # Global variables
 client_sample_rate = 44100  # The sample rate of the incoming audio data

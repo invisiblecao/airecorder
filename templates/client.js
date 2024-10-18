@@ -14,7 +14,21 @@ let transcriptionHistory = '';
 
 async function startStreaming() {
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        localStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              sampleRate: 16000, // Set the desired sample rate
+              sampleSize: 16,    // Optionally specify the sample size (e.g., 16-bit)
+              channelCount: 1,   // Mono audio, adjust as necessary
+            },
+            video: false
+          })
+          .then(function(stream) {
+            // Do something with the audio stream
+            console.log('Audio stream with 16000 Hz sample rate obtained');
+          })
+          .catch(function(err) {
+            console.error('Error accessing audio stream:', err);
+          });
         videoElement.srcObject = localStream;
 
         console.log('Media devices accessed successfully.');
